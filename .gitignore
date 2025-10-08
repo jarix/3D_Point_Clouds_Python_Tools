@@ -1,4 +1,4 @@
 .venv/
-point_clouds_private/
+point_clouds_large/
 Dummy*.*
 *.dat

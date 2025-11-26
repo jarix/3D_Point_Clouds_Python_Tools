@@ -7,8 +7,60 @@
 # Prerequisites
 import os
 import sys
+import copy
 import numpy as np
 import open3d as o3d
+
+
+#%% ---------------------------------------------------------------------
+# Apply Noise to the point cloud
+def apply_noise(pcd, mu, sigma):
+    """
+    Applies Gaussian noise to the points of an Open3D PointCloud.
+
+    Args:
+        pcd (o3d.geometry.PointCloud): The input point cloud.
+        mu (float): The mean of the Gaussian noise distribution (typically 0).
+        sigma (float): The standard deviation (intensity) of the noise.
+
+    Returns:
+        o3d.geometry.PointCloud: A new point cloud with added noise.
+    """
+    noisy_pcd = copy.deepcopy(pcd)
+
+    points = np.asarray(noisy_pcd.points)
+    # Generate noise with the same shape as the points array
+    noise = np.random.normal(mu, sigma, size=points.shape)
+    # Add the noise to the points
+    points += noise
+    # Update the point cloud points
+    noisy_pcd.points = o3d.utility.Vector3dVector(points)
+
+    return noisy_pcd
+
+
+#%% -------------------------------------------------------------------
+# Simulate Spherical Occlusion
+def simulate_spherical_occlusion(pcd, center, radius):
+    """
+    Removes points within a sphere to simulate a round occlusion.
+    """
+    points = np.asarray(pcd.points)
+    center = np.array(center)
+
+    # Calculate Euclidean distance from every point to the center of the occlusion
+    # np.linalg.norm computes the L2 norm (Euclidean distance) along the x, y, z axes
+    distances = np.linalg.norm(points - center, axis=1)
+
+    # Create a mask to select only the points *outside* the occlusion radius
+    # The tilde (~) inverts the boolean mask (True becomes False, and vice versa)
+    points_outside_occlusion = points[distances >= radius]
+
+    # Create a new point cloud with the remaining points
+    pcd_occluded = o3d.geometry.PointCloud()
+    pcd_occluded.points = o3d.utility.Vector3dVector(points_outside_occlusion)
+    
+    return pcd_occluded
 
 
 #%% --------------------------------------------------------------------
@@ -43,25 +95,36 @@ o3d.visualization.draw_geometries([mesh],
 # Sample points with uniform sampling and visualize point cloud
 # Samples random points uniformly from triangle surfaces.
 
-# Sample ~50k points
-nr_points = 50000
-point_cloud = mesh.sample_points_uniformly(number_of_points=nr_points)
+#nr_points_arr = [50000, 100000, 150000, 200000]
+#nr_points_arr = [25000]
+#nr_points_arr = [75000]
+nr_points_arr = [40000]
 
-o3d.io.write_point_cloud("pointcloud_uniform.ply", point_cloud)
-o3d.visualization.draw_geometries([point_cloud])
+
+# Sample points
+for nr_points in nr_points_arr:
+    point_cloud = mesh.sample_points_uniformly(number_of_points=nr_points)
+    o3d.io.write_point_cloud(f"results/pc_uniform_{nr_points}_pts.ply", point_cloud)
+    o3d.visualization.draw_geometries([point_cloud])
 
 
 #%% --------------------------------------------------------------------
 # Sample points with Poisson-disk sampling sampling and visualize point cloud
 # Creates evenly spaced points simulating LiDAR uniformity
 
-point_cloud = mesh.sample_points_poisson_disk(
-    number_of_points=nr_points,
-    init_factor=5  # helps distribute points more evenly
-)
+#nr_points_arr = [50000, 100000, 150000, 200000]
+#nr_points_arr = [25000]
+#nr_points_arr = [75000]
+nr_points_arr = [40000]
 
-o3d.io.write_point_cloud("pointcloud_poisson.ply", point_cloud)
-o3d.visualization.draw_geometries([point_cloud])
+for nr_points in nr_points_arr:
+    point_cloud = mesh.sample_points_poisson_disk(
+        number_of_points=nr_points,
+        init_factor=5  # helps distribute points more evenly
+    )
+
+    o3d.io.write_point_cloud(f"results/pc_poisson_{nr_points}_pts.ply", point_cloud)
+    o3d.visualization.draw_geometries([point_cloud])
 
 
 #%% --------------------------------------------------------------------
@@ -69,19 +132,35 @@ o3d.visualization.draw_geometries([point_cloud])
 
 COLOR = [1.0, 0.0, 0.0]
 
-point_cloud = o3d.io.read_point_cloud("pointcloud_poisson.ply")
+point_cloud = o3d.io.read_point_cloud("results/pointcloud_poisson.ply")
 
 # Assign the same color to all points
 # o3d.utility.Vector3dVector() expects a list of colors, one for each point.
 # np.tile replicates the single color array for the total number of points.
 point_cloud.colors = o3d.utility.Vector3dVector(np.tile(COLOR, (len(point_cloud.points), 1)))
 
+"""
 view_params = {
     "zoom": 0.5,
     "front": [0.0, 0.0, 1.0],  # Vector pointing from camera to origin (e.g., positive X direction)
     "lookat": [0.0, 0.0, 0.0], # The center of the object you're looking at
     "up": [0.0, 1.0, 0.0]      # Up direction of the camera (e.g., positive Z is up)
 }
+"""
+
+view_params = {
+    "zoom": 0.7,
+	"front": [ -0.84312106568777812, 0.24138315335217866, 0.48050082400685235 ],
+	"lookat":
+			[
+				-1.2993812561035156e-05,
+				0.00069500505924224854,
+				0.00031951069831848145
+			],
+	"up" : [ 0.17509471871899762, 0.96812265919773122, -0.17910989985098258 ]
+}
+
+o3d.io.write_point_cloud("results/pointcloud_poisson_angle.ply", point_cloud)
 
 # Visualize the point cloud with the specific viewpoint
 o3d.visualization.draw_geometries([point_cloud], **view_params)
@@ -90,101 +169,101 @@ o3d.visualization.draw_geometries([point_cloud], **view_params)
 #%% --------------------------------------------------------------------
 # Occusion Removal from a given viewpoint
 
-# pcd: existing point cloud (e.g. from mesh.sample_points_poisson_disk)
-pcd = o3d.io.read_point_cloud("pointcloud_poisson.ply")
+point_cloud = o3d.io.read_point_cloud("results/pc_poisson_50000_pts.ply")
 
 # LiDAR/camera position in world coordinates
 sensor_origin = np.array([0.0, 0.0, 1.5])  # x, y, z in meters
+#sensor_origin = np.array([-1.0, 0.0, 1.5])  # x, y, z in meters
 
 # Pick a radius that covers the scene (roughly max distance from sensor)
-points = np.asarray(pcd.points)
+points = np.asarray(point_cloud.points)
 distances = np.linalg.norm(points - sensor_origin, axis=1)
-radius = distances.max() * 1.1
+#radius = distances.max() * 1.1
+radius = distances.max() * 25.0
 
 # Visibility filtering
-_, idx = pcd.hidden_point_removal(sensor_origin, radius)
-visible_pcd = pcd.select_by_index(idx)
+_, idx = point_cloud.hidden_point_removal(sensor_origin, radius)
+visible_pcd = point_cloud.select_by_index(idx)
 
 # Save / visualize
-o3d.io.write_point_cloud("scene_visible_from_sensor.ply", visible_pcd)
+o3d.io.write_point_cloud("results/pc_poisson_50000_pts_visible.ply", visible_pcd)
 o3d.visualization.draw_geometries([visible_pcd])
 
 
-#%% --------------------------------------------------------------------
-# Raycasting
 
-# 1) Load triangle mesh
-print("1. Load triangle mesh")
-mesh_legacy = o3d.io.read_triangle_mesh(MESH_PATH)
-mesh_legacy.compute_vertex_normals()
+#%% ---------------------------------------------------------------------
+# Load the point cloud (your existing code)
+#point_cloud = o3d.io.read_point_cloud("results/pc_poisson_25000_pts.ply")
+#point_cloud = o3d.io.read_point_cloud("results/pc_poisson_50000_pts.ply")
+#point_cloud = o3d.io.read_point_cloud("results/pc_poisson_75000_pts.ply")
+#point_cloud = o3d.io.read_point_cloud("results/pc_uniform_50000_pts.ply")
+#point_cloud_orig = o3d.io.read_point_cloud("results/pc_uniform_50000_pts.ply")
+#point_cloud = apply_noise(point_cloud_orig, 0, 0.005)
 
-# Convert to tensor mesh for raycasting
-mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh_legacy)
+#point_cloud_orig = o3d.io.read_point_cloud("results/pc_uniform_50000_pts.ply")
+#point_cloud_orig = o3d.io.read_point_cloud("results/pc_poisson_50000_pts.ply")
+point_cloud_orig = o3d.io.read_point_cloud("results/pc_poisson_100000_pts.ply")
 
-scene = o3d.t.geometry.RaycastingScene()
-_ = scene.add_triangles(mesh)
+occl_center_1 = [-0.94, -0.17, 0.15] # Adjust position relative to your scene
+occl_radius_1 = 0.15 
+point_cloud_occ1 = simulate_spherical_occlusion(point_cloud_orig, occl_center_1, occl_radius_1)
 
-# 2) LiDAR pose
-print("2. Lidar Pose")
-origin = np.array([0.0, 0.0, 1.5], dtype=np.float32)  # LiDAR center in world frame
+occl_center_2 = [0.35, 0.3, 0.33] # Adjust position relative to your scene
+occl_radius_2 = 0.1 # 0.2
+point_cloud_occ2 = simulate_spherical_occlusion(point_cloud_occ1, occl_center_2, occl_radius_2)
 
-# 3) Define LiDAR scanning pattern (example: 64 beams, 0.2° azimuth)
-print("3. Define LiDAR scanning pattern (example: 64 beams, 0.2° azimuth)")
+occl_center_3 = [-0.83, 0.097, -0.065] # Adjust position relative to your scene
+occl_radius_3 = 0.1 # 0.2
+point_cloud_occ3 = simulate_spherical_occlusion(point_cloud_occ2, occl_center_3, occl_radius_3)
 
-n_vert = 64
-n_horiz = 1800   # 360 / 0.2
 
-vert_min_deg, vert_max_deg = -24.8, 2.0  # e.g. Velodyne-ish
-vert_angles = np.linspace(np.radians(vert_min_deg),
-                          np.radians(vert_max_deg),
-                          n_vert)
+#point_cloud = apply_noise(point_cloud_occ3, 0, 0.005)
+#point_cloud = point_cloud_occ3
+point_cloud = point_cloud_orig
 
-horiz_angles = np.linspace(-np.pi, np.pi, n_horiz, endpoint=False)
 
-dirs = []
-origins = []
+# Set Color
+#COLOR = [1.0, 0.0, 0.0]
+#point_cloud.colors = o3d.utility.Vector3dVector(np.tile(COLOR, (len(point_cloud.points), 1)))
 
-for v in vert_angles:
-    for h in horiz_angles:
-        # Spherical → Cartesian
-        dx = np.cos(v) * np.cos(h)
-        dy = np.cos(v) * np.sin(h)
-        dz = np.sin(v)
-        d = np.array([dx, dy, dz], dtype=np.float32)
 
-        dirs.append(d)
-        origins.append(origin)
+view_params = {
+    "zoom": 0.7,
+    "front": [ -0.84312106568777812, 0.24138315335217866, 0.48050082400685235 ],
+    "lookat": [ -1.2993812561035156e-05, 0.00069500505924224854, 0.00031951069831848145 ],
+    "up" : [ 0.17509471871899762, 0.96812265919773122, -0.17910989985098258 ]
+}
 
-origins = np.stack(origins, axis=0)
-dirs = np.stack(dirs, axis=0)
+# --- Code to apply hidden point removal ---
 
-# 4) Build ray tensor: [x, y, z, dx, dy, dz]
-print("4. Build ray tensor: [x, y, z, dx, dy, dz]")
-rays = np.concatenate([origins, dirs], axis=1).astype(np.float32)
-rays = o3d.core.Tensor(rays, dtype=o3d.core.Dtype.Float32)
+## Calculate necessary parameters
+# The 'front' vector is a unit vector pointing from the camera to the 'lookat' point
+# We need the camera's position, so we estimate the distance to move back from the lookat point.
 
-# 5) Cast rays
-print("5. Cast rays")
-ans = scene.cast_rays(rays)
+# 1. Estimate a suitable radius (a large value covering the scene)
+# The diameter of the point cloud's bounding box is a good starting point.
+diameter = np.linalg.norm(np.asarray(point_cloud.get_max_bound()) - np.asarray(point_cloud.get_min_bound()))
+#radius = diameter * 100.0 # A large radius ensures points within the view are considered
+radius = diameter * 200.0 # A large radius ensures points within the view are considered
 
-# ans["t_hit"] contains distance along each ray; inf if no hit
-t_hit = ans["t_hit"].numpy().reshape(-1, 1)
-mask = np.isfinite(t_hit).flatten()
+# 2. Determine the camera's position (viewpoint origin)
+# The 'front' vector points towards the scene. The camera position is behind the 'lookat' point
+# along the negative 'front' direction. The 'zoom' factor affects the distance.
+camera_distance = diameter / view_params["zoom"] # crude estimation of distance
+#camera_position = np.asarray(view_params["lookat"]) - np.asarray(view_params["front"]) * camera_distance
+camera_position = np.asarray(view_params["lookat"]) + np.asarray(view_params["front"]) * camera_distance
 
-t_hit_valid = t_hit[mask]
-rays_valid = rays.numpy()[mask]
+## Perform Hidden Point Removal (HPR)
+# The function returns the visible point cloud (as a new point cloud object) and the depth map
+_, pt_map = point_cloud.hidden_point_removal(camera_position, radius)
 
-# 6) Compute hit points: P = O + t * D
-print("6. Compute hit points: P = O + t * D")
-origins_valid = rays_valid[:, :3]
-dirs_valid = rays_valid[:, 3:]
-points = origins_valid + dirs_valid * t_hit_valid
+## Create a new point cloud containing only the visible points
+# The 'pt_map' contains the indices of the visible points
+visible_point_cloud = point_cloud.select_by_index(pt_map)
 
-# 7) Make point cloud
-print("7. Make point cloud")
-pcd = o3d.geometry.PointCloud()
-pcd.points = o3d.utility.Vector3dVector(points)
+# Optional: Visualize the result
+o3d.visualization.draw_geometries([visible_point_cloud], **view_params)
+#o3d.visualization.draw_geometries_with_editing([visible_point_cloud])
 
-o3d.io.write_point_cloud("simulated_lidar_scan.ply", pcd)
-o3d.visualization.draw_geometries([pcd])
 
+# %%

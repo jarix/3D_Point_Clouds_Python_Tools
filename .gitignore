@@ -1,4 +1,4 @@
 .venv/
-point_clouds_large/
+.ipynb_checkpoints/
 Dummy*.*
 *.dat
